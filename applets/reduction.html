@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Reduction Machine — learn-lean</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .trace { font-family: var(--mono); font-size: .9rem; }
+  .step {
+    display: grid;
+    grid-template-columns: 2.2rem 1.6rem 1fr;
+    gap: .5rem;
+    padding: .3rem .2rem;
+    border-radius: 6px;
+    align-items: baseline;
+    animation: slide .18s ease-out;
+  }
+  @keyframes slide { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; } }
+  .step:nth-child(odd) { background: var(--panel-2); }
+  .step .n { color: var(--ink-dim); font-size: .75rem; text-align: right; }
+  .step .eq { color: var(--ink-dim); }
+  .step .term { word-break: break-word; }
+  .step.done .eq { color: var(--good); }
+  .rule {
+    grid-column: 3;
+    font-size: .72rem;
+    color: var(--accent);
+    font-family: var(--sans);
+    margin-top: .1rem;
+  }
+  .defs {
+    font-family: var(--mono);
+    font-size: .82rem;
+    white-space: pre;
+    color: var(--ink-dim);
+    background: var(--panel-2);
+    border-radius: 8px;
+    padding: .75rem .9rem;
+    margin-bottom: 1rem;
+    overflow-x: auto;
+  }
+  .status { font-size: .85rem; color: var(--ink-dim); margin-top: .9rem; }
+  .status b { color: var(--ink); }
+  .race { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 720px) { .race { grid-template-columns: 1fr; } }
+  .race .panel h3 { margin: 0 0 .5rem; font-size: .9rem; font-family: var(--mono); }
+  .bar { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; margin-top: .5rem; }
+  .bar > div { height: 100%; background: var(--accent); transition: width .2s; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="back" href="index.html">← all applets</a>
+<header>
+  <h1>The Reduction Machine</h1>
+  <p class="sub">
+    Every recursive definition in Lean is a set of rewrite rules. Running a
+    program means applying them until nothing matches. Watch it happen one
+    step at a time — the highlighted piece is the <em>redex</em>, the
+    subterm about to be replaced.
+  </p>
+</header>
+
+<div class="controls">
+  <select id="pick"></select>
+  <button id="step" class="primary">Step →</button>
+  <button id="auto">Run</button>
+  <button id="reset">Reset</button>
+</div>
+
+<div class="defs" id="defs"></div>
+<div class="panel">
+  <div class="trace" id="trace"></div>
+  <div class="status" id="status"></div>
+</div>
+
+<h2>The payoff: two reverses</h2>
+<p class="sub" style="margin-bottom:1rem">
+  Exercises 3.1 and 3.10 both reverse a list. They are not the same program.
+  Press <b>Race</b> and watch the step counts diverge — this is asymptotic
+  complexity, made visible.
+</p>
+<div class="controls"><button id="race" class="primary">Race</button>
+  <select id="racelen">
+    <option value="3">3 elements</option>
+    <option value="4" selected>4 elements</option>
+    <option value="5">5 elements</option>
+    <option value="6">6 elements</option>
+  </select>
+</div>
+<div class="race">
+  <div class="panel">
+    <h3>reverse (naive)</h3>
+    <div class="mono" id="r1">—</div>
+    <div class="bar"><div id="b1" style="width:0"></div></div>
+  </div>
+  <div class="panel">
+    <h3>revGo (accumulator)</h3>
+    <div class="mono" id="r2">—</div>
+    <div class="bar"><div id="b2" style="width:0"></div></div>
+  </div>
+</div>
+<p class="note">
+  The naive version rebuilds the whole list on every step (that's the
+  <code>++</code>), so it does work proportional to n². The accumulator
+  version carries the answer downward and touches each element once.
+  Same output, different cost — and in Lean you can <em>prove</em> they
+  agree (try it, after Chapter 8).
+</p>
+
+</div>
+
+<script>
+/* ---------- terms ---------------------------------------------------------
+   A term is either a string (an atom/variable/number) or an array
+   [head, ...args]. That's the whole representation.                        */
+
+const isApp = t => Array.isArray(t);
+const head  = t => isApp(t) ? t[0] : null;
+
+/* ---------- rewrite rules -------------------------------------------------
+   Each rule is [name, matcher]. The matcher gets a term and returns the
+   rewritten term, or null if it doesn't apply. Leftmost-outermost order.  */
+
+const num = t => (typeof t === 'string' && /^\d+$/.test(t)) ? parseInt(t) : null;
+
+const RULES = [
+  // Peano naturals
+  ['add m Z = m',            t => head(t)==='add' && t[2]==='Z' ? t[1] : null],
+  ['add m (S n) = S (add m n)',
+                             t => head(t)==='add' && head(t[2])==='S' ? ['S', ['add', t[1], t[2][1]]] : null],
+  ['mul m Z = Z',            t => head(t)==='mul' && t[2]==='Z' ? 'Z' : null],
+  ['mul m (S n) = add (mul m n) m',
+                             t => head(t)==='mul' && head(t[2])==='S' ? ['add', ['mul', t[1], t[2][1]], t[1]] : null],
+
+  // lists
+  ['length [] = 0',          t => head(t)==='length' && t[1]==='nil' ? '0' : null],
+  ['length (h :: t) = 1 + length t',
+                             t => head(t)==='length' && head(t[1])==='cons' ? ['+', '1', ['length', t[1][2]]] : null],
+
+  ['map f [] = []',          t => head(t)==='map' && t[2]==='nil' ? 'nil' : null],
+  ['map f (h :: t) = f h :: map f t',
+                             t => head(t)==='map' && head(t[2])==='cons'
+                                  ? ['cons', [t[1], t[2][1]], ['map', t[1], t[2][2]]] : null],
+
+  ['foldr f i [] = i',       t => head(t)==='foldr' && t[3]==='nil' ? t[2] : null],
+  ['foldr f i (h :: t) = f h (foldr f i t)',
+                             t => head(t)==='foldr' && head(t[3])==='cons'
+                                  ? [t[1], t[3][1], ['foldr', t[1], t[2], t[3][2]]] : null],
+
+  ['[] ++ ys = ys',          t => head(t)==='++' && t[1]==='nil' ? t[2] : null],
+  ['(x :: xs) ++ ys = x :: (xs ++ ys)',
+                             t => head(t)==='++' && head(t[1])==='cons'
+                                  ? ['cons', t[1][1], ['++', t[1][2], t[2]]] : null],
+
+  ['reverse [] = []',        t => head(t)==='reverse' && t[1]==='nil' ? 'nil' : null],
+  ['reverse (x :: xs) = reverse xs ++ [x]',
+                             t => head(t)==='reverse' && head(t[1])==='cons'
+                                  ? ['++', ['reverse', t[1][2]], ['cons', t[1][1], 'nil']] : null],
+
+  ['revGo [] acc = acc',     t => head(t)==='revGo' && t[1]==='nil' ? t[2] : null],
+  ['revGo (x :: xs) acc = revGo xs (x :: acc)',
+                             t => head(t)==='revGo' && head(t[1])==='cons'
+                                  ? ['revGo', t[1][2], ['cons', t[1][1], t[2]]] : null],
+
+  // arithmetic on concrete numerals, so traces stay readable
+  ['arithmetic',             t => {
+      if (head(t) !== '+' && head(t) !== '*') return null;
+      const a = num(t[1]), b = num(t[2]);
+      if (a === null || b === null) return null;
+      return String(head(t) === '+' ? a + b : a * b);
+  }],
+  ['double x = x * 2',       t => head(t)==='double' ? ['*', t[1], '2'] : null],
+];
+
+/* find the leftmost-outermost redex; returns {path, rule, result} or null */
+function findRedex(t, path = []) {
+  for (const [name, fn] of RULES) {
+    const r = fn(t);
+    if (r !== null && r !== undefined) return { path, rule: name, result: r };
+  }
+  if (isApp(t)) {
+    for (let i = 1; i < t.length; i++) {
+      const found = findRedex(t[i], path.concat(i));
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function replaceAt(t, path, val) {
+  if (path.length === 0) return val;
+  const copy = t.slice();
+  copy[path[0]] = replaceAt(t[path[0]], path.slice(1), val);
+  return copy;
+}
+
+/* ---------- printing ------------------------------------------------------ */
+
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+/* Try to print a cons-chain as [a, b, c]; returns null if not a proper list. */
+function asList(t) {
+  const out = [];
+  while (true) {
+    if (t === 'nil') return out;
+    if (head(t) === 'cons') { out.push(t[1]); t = t[2]; }
+    else return null;
+  }
+}
+
+function print(t, path, mark, prec = 0) {
+  const hit = mark && path.length === mark.length && path.every((v, i) => v === mark[i]);
+  const wrapMark = s => hit ? `<mark>${s}</mark>` : s;
+  const at = i => path.concat(i);
+
+  if (!isApp(t)) return wrapMark(esc(t));
+
+  const h = t[0];
+
+  // list literal
+  const lst = asList(t);
+  if (lst) {
+    // only render as a literal if no marked node lives inside it
+    const inside = mark && mark.length > path.length && mark.slice(0, path.length).every((v,i)=>v===path[i]);
+    if (!inside) {
+      return wrapMark('[' + lst.map(e => print(e, [], null)).join(', ') + ']');
+    }
+  }
+
+  let body;
+  if (h === 'cons') {
+    body = `${print(t[1], at(1), mark, 5)} :: ${print(t[2], at(2), mark, 4)}`;
+    if (prec > 4) body = `(${body})`;
+  } else if (h === '++' || h === '+' || h === '*') {
+    body = `${print(t[1], at(1), mark, 6)} ${esc(h)} ${print(t[2], at(2), mark, 6)}`;
+    if (prec > 5) body = `(${body})`;
+  } else {
+    const args = t.slice(1).map((a, i) => print(a, at(i + 1), mark, 10)).join(' ');
+    body = `${esc(h)} ${args}`;
+    if (prec > 9) body = `(${body})`;
+  }
+  return wrapMark(body);
+}
+
+/* ---------- programs ------------------------------------------------------ */
+
+const L = (...xs) => xs.reduceRight((acc, x) => ['cons', x, acc], 'nil');
+const peano = n => n === 0 ? 'Z' : ['S', peano(n - 1)];
+
+const PROGRAMS = {
+  'add 2 3  (Peano naturals)': {
+    defs: `add : MyNat → MyNat → MyNat
+  | m, Z      => m
+  | m, succ n => succ (add m n)`,
+    term: ['add', peano(2), peano(3)],
+  },
+  'mul 2 3  (Peano naturals)': {
+    defs: `mul : MyNat → MyNat → MyNat
+  | m, Z      => Z
+  | m, succ n => add (mul m n) m`,
+    term: ['mul', peano(2), peano(3)],
+  },
+  'length [7, 8, 9]': {
+    defs: `length : List α → Nat
+  | []     => 0
+  | _ :: t => 1 + length t`,
+    term: ['length', L('7', '8', '9')],
+  },
+  'map double [1, 2, 3]': {
+    defs: `map (f : α → β) : List α → List β
+  | []     => []
+  | h :: t => f h :: map f t`,
+    term: ['map', 'double', L('1', '2', '3')],
+  },
+  'foldr (+) 0 [1, 2, 3]': {
+    defs: `foldr (f : α → β → β) (init : β) : List α → β
+  | []     => init
+  | h :: t => f h (foldr f init t)
+
+Watch how the whole list is unpacked *before* any
+addition happens. That's why foldr on a huge list
+can blow the stack.`,
+    term: ['foldr', '+', '0', L('1', '2', '3')],
+  },
+  'reverse [1, 2, 3]  (naive)': {
+    defs: `reverse : List α → List α
+  | []      => []
+  | x :: xs => reverse xs ++ [x]
+
+(++) : List α → List α → List α
+  | [],      ys => ys
+  | x :: xs, ys => x :: (xs ++ ys)`,
+    term: ['reverse', L('1', '2', '3')],
+  },
+  'revGo [1, 2, 3] []  (accumulator)': {
+    defs: `revGo : List α → List α → List α
+  | [],      acc => acc
+  | x :: xs, acc => revGo xs (x :: acc)`,
+    term: ['revGo', L('1', '2', '3'), 'nil'],
+  },
+};
+
+/* ---------- driver -------------------------------------------------------- */
+
+const $ = id => document.getElementById(id);
+let current, steps, timer = null;
+
+function load(name) {
+  clearInterval(timer); timer = null;
+  current = name;
+  $('pick').value = name;
+  $('auto').textContent = 'Run';
+  $('defs').textContent = PROGRAMS[name].defs;
+  steps = [{ term: PROGRAMS[name].term, rule: null }];
+  render();
+}
+
+function render() {
+  const html = steps.map((s, i) => {
+    const last = i === steps.length - 1;
+    const redex = last ? findRedex(s.term) : null;
+    const mark = last && redex ? redex.path : null;
+    const eq = i === 0 ? '' : '=';
+    const done = last && !redex;
+    return `<div class="step${done ? ' done' : ''}">
+      <span class="n">${i === 0 ? '' : i}</span>
+      <span class="eq">${done && i > 0 ? '=' : eq}</span>
+      <span class="term">${print(s.term, [], mark)}</span>
+      ${s.rule ? `<span class="rule">↑ ${esc(s.rule)}</span>` : ''}
+    </div>`;
+  }).join('');
+  $('trace').innerHTML = html;
+
+  const redex = findRedex(steps[steps.length - 1].term);
+  $('step').disabled = !redex;
+  $('auto').disabled = !redex;
+  $('status').innerHTML = redex
+    ? `next rule: <b>${esc(redex.rule)}</b>`
+    : `<b>normal form</b> — nothing left to rewrite. ${steps.length - 1} steps.`;
+}
+
+function step() {
+  const cur = steps[steps.length - 1].term;
+  const r = findRedex(cur);
+  if (!r) { clearInterval(timer); timer = null; return false; }
+  steps.push({ term: replaceAt(cur, r.path, r.result), rule: r.rule });
+  render();
+  return true;
+}
+
+$('pick').innerHTML = Object.keys(PROGRAMS).map(k => `<option>${esc(k)}</option>`).join('');
+$('pick').onchange = e => load(e.target.value);
+$('step').onclick = step;
+$('reset').onclick = () => load(current);
+$('auto').onclick = () => {
+  if (timer) { clearInterval(timer); timer = null; $('auto').textContent = 'Run'; return; }
+  $('auto').textContent = 'Pause';
+  timer = setInterval(() => { if (!step()) $('auto').textContent = 'Run'; }, 350);
+};
+
+/* ---------- the race ------------------------------------------------------ */
+
+function countSteps(term, cap = 20000) {
+  let n = 0;
+  while (n < cap) {
+    const r = findRedex(term);
+    if (!r) break;
+    term = replaceAt(term, r.path, r.result);
+    n++;
+  }
+  return n;
+}
+
+$('race').onclick = () => {
+  const len = parseInt($('racelen').value);
+  const xs = L(...Array.from({ length: len }, (_, i) => String(i + 1)));
+  const a = countSteps(['reverse', xs]);
+  const b = countSteps(['revGo', xs, 'nil']);
+  const max = Math.max(a, b);
+  $('r1').textContent = `${a} steps  (n=${len})`;
+  $('r2').textContent = `${b} steps  (n=${len})`;
+  $('b1').style.width = (100 * a / max) + '%';
+  $('b2').style.width = (100 * b / max) + '%';
+};
+
+load(Object.keys(PROGRAMS)[0]);
+</script>
+</body>
+</html>

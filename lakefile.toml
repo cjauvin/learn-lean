@@ -1,0 +1,12 @@
+name = "LearnLean"
+version = "0.1.0"
+
+# Only the course is built by default, so `lake build` reports *your* progress.
+# The reference answers are a separate target: `lake build Solutions`.
+defaultTargets = ["LearnLean"]
+
+[[lean_lib]]
+name = "LearnLean"
+
+[[lean_lib]]
+name = "Solutions"

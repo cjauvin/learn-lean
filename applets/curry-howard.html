@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proofs Are Programs — learn-lean</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 780px) { .split { grid-template-columns: 1fr; } }
+
+  .goalbox { font-family: var(--mono); font-size: .9rem; }
+  .ctx-line { padding: .15rem 0; }
+  .ctx-line .nm { color: var(--accent); }
+  .turnstile { border-top: 1px solid var(--line); margin: .5rem 0; padding-top: .5rem; }
+  .goal-empty { color: var(--good); font-family: var(--sans); font-size: .9rem; }
+
+  .term {
+    font-family: var(--mono); font-size: .9rem;
+    white-space: pre-wrap; word-break: break-word; line-height: 1.7;
+  }
+  .hole {
+    background: var(--warn-soft); color: var(--warn);
+    border: 1px dashed var(--warn); border-radius: 4px;
+    padding: 0 .3em; font-weight: 600;
+  }
+  .hole.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+
+  .moves { display: flex; flex-direction: column; gap: .4rem; margin-top: .75rem; }
+  .move {
+    text-align: left; font-family: var(--mono); font-size: .82rem;
+    display: flex; justify-content: space-between; gap: 1rem; align-items: baseline;
+  }
+  .move .why { font-family: var(--sans); font-size: .72rem; color: var(--ink-dim); }
+
+  .won {
+    background: var(--good-soft); border-color: var(--good);
+    color: var(--good); font-family: var(--sans); font-size: .9rem;
+    padding: .7rem .9rem; border-radius: 8px; margin-top: .75rem;
+  }
+  .won code { color: var(--ink); display: block; margin-top: .4rem; }
+
+  .puzzlist { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: 1rem; }
+  .puzzlist button { font-family: var(--mono); font-size: .78rem; padding: .3rem .55rem; }
+  .puzzlist button.solved { border-color: var(--good); color: var(--good); }
+  .puzzlist button.cur { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  .corr td:first-child, .corr th:first-child { font-family: var(--mono); }
+  .corr td:nth-child(2) { font-family: var(--mono); color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="back" href="index.html">← all applets</a>
+<header>
+  <h1>Proofs Are Programs</h1>
+  <p class="sub">
+    Chapter 6 claims a proof <em>is</em> a value and a proposition <em>is</em>
+    a type. Here is that claim, made clickable. Build the term; the
+    proposition gets proved as a side effect. When you're done, the Lean
+    code at the bottom is a real answer you can paste into
+    <code>Ch06_Propositions.lean</code>.
+  </p>
+</header>
+
+<div class="puzzlist" id="puzzles"></div>
+
+<div class="split">
+  <div class="panel">
+    <h2 style="margin-top:0">Goal</h2>
+    <div class="goalbox" id="goal"></div>
+    <div class="moves" id="moves"></div>
+  </div>
+  <div class="panel">
+    <h2 style="margin-top:0">Proof term</h2>
+    <div class="term" id="term"></div>
+    <div id="won"></div>
+    <div class="controls" style="margin-top:1rem; margin-bottom:0">
+      <button id="undo">Undo</button>
+      <button id="restart">Restart</button>
+    </div>
+  </div>
+</div>
+
+<h2>The dictionary</h2>
+<div class="panel scroll-x">
+<table class="corr">
+  <tr><th>Logic</th><th>Programming</th><th>In Lean you write</th></tr>
+  <tr><td>P → Q</td><td>function type</td><td><code>fun hp => …</code></td></tr>
+  <tr><td>P ∧ Q</td><td>pair / struct</td><td><code>⟨_, _⟩</code>, <code>h.left</code>, <code>h.right</code></td></tr>
+  <tr><td>P ∨ Q</td><td>tagged union</td><td><code>Or.inl _</code>, <code>match h with …</code></td></tr>
+  <tr><td>¬P</td><td>P → Empty</td><td><code>fun hp => …</code> (returns <code>False</code>)</td></tr>
+  <tr><td>False</td><td>type with no values</td><td><code>h.elim</code> — proves anything</td></tr>
+  <tr><td>∀ x, P x</td><td>dependent function</td><td><code>fun x => …</code></td></tr>
+  <tr><td>∃ x, P x</td><td>dependent pair</td><td><code>⟨witness, proof⟩</code></td></tr>
+  <tr><td>modus ponens</td><td>function application</td><td><code>h hp</code></td></tr>
+  <tr><td>proof by cases</td><td>pattern match</td><td><code>match h with | .inl a => … </code></td></tr>
+</table>
+</div>
+<p class="note">
+  Nothing here is an analogy or a teaching device. These are literally the
+  same constructs in Lean's kernel: <code>And</code> is declared as a
+  <code>structure</code>, <code>Or</code> as an <code>inductive</code> with
+  two constructors, and <code>→</code> is the function arrow. Run
+  <code>#print And</code> in your editor and look.
+</p>
+</div>
+
+<script>
+/* ========== propositions ========== */
+const A  = n => ({ k: 'atom', n });
+const IMP = (a, b) => ({ k: 'imp', a, b });
+const AND = (a, b) => ({ k: 'and', a, b });
+const OR  = (a, b) => ({ k: 'or', a, b });
+const FALSE = { k: 'false' };
+const NOT = a => IMP(a, FALSE);
+
+const P = A('P'), Q = A('Q'), R = A('R');
+
+const eq = (x, y) =>
+  x.k !== y.k ? false :
+  x.k === 'atom' ? x.n === y.n :
+  x.k === 'false' ? true :
+  eq(x.a, y.a) && eq(x.b, y.b);
+
+/* precedence: ¬ 4 > ∧ 3 > ∨ 2 > → 1 */
+function show(t, prec = 0) {
+  let s, p;
+  if (t.k === 'atom')  return t.n;
+  if (t.k === 'false') return 'False';
+  if (t.k === 'imp' && t.b.k === 'false') { s = '¬' + show(t.a, 4); p = 4; }
+  else if (t.k === 'imp') { s = show(t.a, 2) + ' → ' + show(t.b, 1); p = 1; }
+  else if (t.k === 'and') { s = show(t.a, 4) + ' ∧ ' + show(t.b, 4); p = 3; }
+  else { s = show(t.a, 3) + ' ∨ ' + show(t.b, 3); p = 2; }
+  return prec > p ? '(' + s + ')' : s;
+}
+
+/* ========== proof terms with holes ========== */
+let holeSeq = 0;
+const hole = (ctx, goal) => ({ k: 'hole', id: ++holeSeq, ctx, goal });
+
+function renderTerm(t, activeId) {
+  const h = s => `<span class="hole${t.id === activeId ? ' active' : ''}">${s}</span>`;
+  switch (t.k) {
+    case 'hole': return h('?' + t.id);
+    case 'var':  return t.name;
+    case 'lam':  return `fun ${t.binder} => ${renderTerm(t.body, activeId)}`;
+    case 'pair': return `⟨${renderTerm(t.a, activeId)}, ${renderTerm(t.b, activeId)}⟩`;
+    case 'inl':  return `Or.inl ${par(t.e, activeId)}`;
+    case 'inr':  return `Or.inr ${par(t.e, activeId)}`;
+    case 'app':  return [t.fn, ...t.args.map(a => par(a, activeId))].join(' ');
+    case 'elim': return t.args.length
+      ? `(${[t.fn, ...t.args.map(a => par(a, activeId))].join(' ')}).elim`
+      : `${t.fn}.elim`;
+    case 'match':
+      return `match ${t.scrut} with\n`
+        + `  | Or.inl ${t.ln} => ${renderTerm(t.lb, activeId)}\n`
+        + `  | Or.inr ${t.rn} => ${renderTerm(t.rb, activeId)}`;
+  }
+}
+const par = (t, a) => {
+  const s = renderTerm(t, a);
+  const simple = t.k === 'hole' || t.k === 'var';
+  return simple ? s : '(' + s + ')';
+};
+
+function firstHole(t) {
+  switch (t.k) {
+    case 'hole': return t;
+    case 'lam':  return firstHole(t.body);
+    case 'pair': return firstHole(t.a) || firstHole(t.b);
+    case 'inl': case 'inr': return firstHole(t.e);
+    case 'app': case 'elim':
+      for (const a of t.args) { const h = firstHole(a); if (h) return h; }
+      return null;
+    case 'match': return firstHole(t.lb) || firstHole(t.rb);
+    default: return null;
+  }
+}
+
+function fill(t, id, val) {
+  if (t.k === 'hole') return t.id === id ? val : t;
+  const c = { ...t };
+  if (t.k === 'lam') c.body = fill(t.body, id, val);
+  if (t.k === 'pair') { c.a = fill(t.a, id, val); c.b = fill(t.b, id, val); }
+  if (t.k === 'inl' || t.k === 'inr') c.e = fill(t.e, id, val);
+  if (t.k === 'app' || t.k === 'elim') c.args = t.args.map(a => fill(a, id, val));
+  if (t.k === 'match') { c.lb = fill(t.lb, id, val); c.rb = fill(t.rb, id, val); }
+  return c;
+}
+
+/* ========== available moves for a goal ========== */
+function nameFor(type, ctx) {
+  const base = type.k === 'atom' ? 'h' + type.n.toLowerCase()
+             : type.k === 'imp' && type.b.k === 'false' ? 'hn'
+             : 'h';
+  let n = base, i = 1;
+  while (ctx.some(c => c.name === n)) n = base + (++i);
+  return n;
+}
+
+function moves(g) {
+  const out = [];
+  const { ctx, goal } = g;
+
+  if (goal.k === 'imp') {
+    const nm = nameFor(goal.a, ctx);
+    out.push({
+      label: `fun ${nm} => ?`,
+      why: goal.b.k === 'false'
+        ? `to prove ¬${show(goal.a,4)}, take a proof of ${show(goal.a)} and derive False`
+        : `an implication is a function — assume ${show(goal.a)}`,
+      apply: () => ({ k: 'lam', binder: nm,
+        body: hole(ctx.concat({ name: nm, type: goal.a }), goal.b) })
+    });
+  }
+  if (goal.k === 'and') {
+    out.push({
+      label: `⟨?, ?⟩`,
+      why: 'a conjunction is a pair — prove each side',
+      apply: () => ({ k: 'pair', a: hole(ctx, goal.a), b: hole(ctx, goal.b) })
+    });
+  }
+  if (goal.k === 'or') {
+    out.push({ label: `Or.inl ?`, why: `commit to the left: prove ${show(goal.a)}`,
+      apply: () => ({ k: 'inl', e: hole(ctx, goal.a) }) });
+    out.push({ label: `Or.inr ?`, why: `commit to the right: prove ${show(goal.b)}`,
+      apply: () => ({ k: 'inr', e: hole(ctx, goal.b) }) });
+  }
+
+  for (const c of ctx) {
+    if (eq(c.type, goal)) {
+      out.push({ label: `exact ${c.name}`, why: 'this hypothesis is the goal',
+        apply: () => ({ k: 'var', name: c.name }) });
+    }
+    /* Walk the arrow spine of `c`: applying it to 1, 2, ... arguments.
+       If some prefix lands on the goal, that's an `apply`. If some prefix
+       lands on False, that's a contradiction and closes any goal. */
+    let rest = c.type, argTypes = [];
+    while (rest.k === 'imp') {
+      argTypes.push(rest.a);
+      rest = rest.b;
+      const holes = () => argTypes.map(a => hole(ctx, a));
+      const call = `${c.name} ${argTypes.map(() => '?').join(' ')}`;
+      if (eq(rest, goal)) {
+        out.push({ label: call,
+          why: `apply ${c.name} — leaves ${argTypes.map(a => show(a)).join(', ')} to prove`,
+          apply: () => ({ k: 'app', fn: c.name, args: holes() }) });
+        break;
+      }
+      if (rest.k === 'false' && goal.k !== 'false') {
+        out.push({ label: `(${call}).elim`,
+          why: `${c.name} yields a contradiction — and False proves anything`,
+          apply: () => ({ k: 'elim', fn: c.name, args: holes() }) });
+        break;
+      }
+    }
+    if (c.type.k === 'false') {
+      out.push({ label: `${c.name}.elim`, why: 'from False, anything follows',
+        apply: () => ({ k: 'elim', fn: c.name, args: [] }) });
+    }
+    if (c.type.k === 'and' && !ctx.some(d => d.name === c.name + '.left')) {
+      out.push({ label: `use ${c.name}.left / ${c.name}.right`,
+        why: 'destructure the pair into your context',
+        ctxOnly: () => ctx.concat(
+          { name: c.name + '.left', type: c.type.a },
+          { name: c.name + '.right', type: c.type.b }) });
+    }
+    if (c.type.k === 'or') {
+      const ln = nameFor(c.type.a, ctx), rn = nameFor(c.type.b, ctx.concat({name:ln}));
+      out.push({ label: `match ${c.name} with …`, why: 'proof by cases — handle both alternatives',
+        apply: () => ({ k: 'match', scrut: c.name, ln, rn,
+          lb: hole(ctx.filter(x => x.name !== c.name).concat({ name: ln, type: c.type.a }), goal),
+          rb: hole(ctx.filter(x => x.name !== c.name).concat({ name: rn, type: c.type.b }), goal) }) });
+    }
+  }
+  return out;
+}
+
+/* ========== puzzles ========== */
+const PUZZLES = [
+  ['6.0  P → P',                       IMP(P, P)],
+  ['6.0b P → Q → P',                   IMP(P, IMP(Q, P))],
+  ['6.0c (P→Q) → (Q→R) → (P→R)',       IMP(IMP(P,Q), IMP(IMP(Q,R), IMP(P,R)))],
+  ['6.0d P ∧ Q → Q ∧ P',               IMP(AND(P,Q), AND(Q,P))],
+  ['6.1  curry',                       IMP(IMP(AND(P,Q), R), IMP(P, IMP(Q, R)))],
+  ['6.2  uncurry',                     IMP(IMP(P, IMP(Q,R)), IMP(AND(P,Q), R))],
+  ['6.3  and_map',                     IMP(IMP(P,Q), IMP(AND(P,R), AND(Q,R)))],
+  ['6.4  or_map',                      IMP(IMP(P,Q), IMP(OR(P,R), OR(Q,R)))],
+  ['6.5  or_elim',                     IMP(IMP(P,R), IMP(IMP(Q,R), IMP(OR(P,Q), R)))],
+  ['6.6  contrapositive',              IMP(IMP(P,Q), IMP(NOT(Q), NOT(P)))],
+  ['6.7  demorgan',                    IMP(AND(NOT(P), NOT(Q)), NOT(OR(P,Q)))],
+  ['6.8  explosion',                   IMP(AND(P, NOT(P)), Q)],
+];
+
+const $ = id => document.getElementById(id);
+const solved = new Set();
+let cur = 0, term, history;
+
+function start(i) {
+  cur = i; holeSeq = 0;
+  term = hole([], PUZZLES[i][1]);
+  history = [];
+  draw();
+}
+
+function draw() {
+  $('puzzles').innerHTML = PUZZLES.map((p, i) =>
+    `<button data-i="${i}" class="${i === cur ? 'cur' : ''}${solved.has(i) ? ' solved' : ''}">${
+      solved.has(i) ? '✓ ' : ''}${p[0]}</button>`).join('');
+  [...$('puzzles').children].forEach(b => b.onclick = () => start(+b.dataset.i));
+
+  const h = firstHole(term);
+  $('term').innerHTML = `<span style="color:var(--ink-dim)">theorem it (P Q R : Prop) : ${show(PUZZLES[cur][1])} :=</span>\n  `
+    + renderTerm(term, h ? h.id : null);
+
+  if (!h) {
+    solved.add(cur);
+    $('goal').innerHTML = `<div class="goal-empty">No goals remaining. The term is complete —
+      and because it type-checks, the proposition is proved.</div>`;
+    $('moves').innerHTML = '';
+    $('won').innerHTML = `<div class="won">Proved. Paste-ready Lean:
+      <code>theorem it (P Q R : Prop) : ${escapeHtml(show(PUZZLES[cur][1]))} :=\n  ${escapeHtml(renderTerm(term, null)).replace(/\n/g, '\n  ')}</code></div>`;
+    return;
+  }
+  $('won').innerHTML = '';
+
+  const ctxHtml = h.ctx.length
+    ? h.ctx.map(c => `<div class="ctx-line"><span class="nm">${c.name}</span> : ${escapeHtml(show(c.type))}</div>`).join('')
+    : `<div class="ctx-line" style="color:var(--ink-dim)">(nothing assumed yet)</div>`;
+  $('goal').innerHTML = ctxHtml
+    + `<div class="turnstile">⊢ ${escapeHtml(show(h.goal))}</div>`;
+
+  const ms = moves(h);
+  $('moves').innerHTML = ms.length
+    ? ms.map((m, i) => `<button class="move" data-m="${i}"><span>${escapeHtml(m.label)}</span><span class="why">${escapeHtml(m.why)}</span></button>`).join('')
+    : `<div class="note">No moves available — this branch is stuck. Undo and
+       try a different shape. (Getting stuck is real information: some true-looking
+       propositions are not constructively provable at all.)</div>`;
+
+  [...$('moves').querySelectorAll('button')].forEach(b => b.onclick = () => {
+    const m = ms[+b.dataset.m];
+    history.push(JSON.parse(JSON.stringify({ term, holeSeq })));
+    if (m.ctxOnly) {
+      const nctx = m.ctxOnly();
+      term = fill(term, h.id, hole(nctx, h.goal));
+    } else {
+      term = fill(term, h.id, m.apply());
+    }
+    draw();
+  });
+}
+
+const escapeHtml = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+$('undo').onclick = () => { const p = history.pop(); if (p) { term = p.term; holeSeq = p.holeSeq; draw(); } };
+$('restart').onclick = () => start(cur);
+start(0);
+</script>
+</body>
+</html>

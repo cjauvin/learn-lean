@@ -1,0 +1,25 @@
+{
+  // Open the InfoView automatically -- it is where all the feedback lives.
+  "lean4.autoOpenInfoView": true,
+
+  // Show the goal state for the line the cursor is on, not just on click.
+  "lean4.infoview.autoOpenShowsGoal": true,
+  "lean4.infoview.showExpectedType": true,
+  "lean4.infoview.showGoalNames": true,
+
+  // Unicode input: type \and, \to, \forall, \<> ... then space.
+  "lean4.input.enabled": true,
+  "lean4.input.eagerReplacementEnabled": true,
+  "lean4.input.leader": "\\",
+
+  "[lean4]": {
+    "editor.rulers": [100],
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true,
+    "editor.wordWrap": "off"
+  },
+
+  "files.exclude": {
+    "**/.lake": true
+  }
+}

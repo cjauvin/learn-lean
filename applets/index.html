@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>learn-lean applets</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
+  .card {
+    display: block; text-decoration: none; color: inherit;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 1.1rem 1.25rem;
+    transition: border-color .15s, transform .15s;
+  }
+  .card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .card h3 { margin: .4rem 0 .35rem; font-size: 1.05rem; }
+  .card p { margin: 0; font-size: .87rem; color: var(--ink-dim); }
+  .chip {
+    display: inline-block; font-family: var(--mono); font-size: .7rem;
+    background: var(--accent-soft); color: var(--accent);
+    padding: .15rem .45rem; border-radius: 5px;
+  }
+  .glyph { font-size: 1.6rem; line-height: 1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>learn-lean applets</h1>
+  <p class="sub">
+    Three things that are hard to see from inside a text editor, made
+    visible. Each one pairs with a chapter — read the chapter, then come
+    play here (or the other way round; both work).
+  </p>
+</header>
+
+<div class="cards">
+  <a class="card" href="reduction.html">
+    <div class="glyph">⟶</div>
+    <span class="chip">Ch. 2 – 3</span>
+    <h3>The Reduction Machine</h3>
+    <p>Step through a recursive function as it unfolds, one rewrite at a
+       time. Then race naive <code>reverse</code> against the accumulator
+       version and watch n² pull away from n.</p>
+  </a>
+
+  <a class="card" href="curry-howard.html">
+    <div class="glyph">≅</div>
+    <span class="chip">Ch. 6</span>
+    <h3>Proofs Are Programs</h3>
+    <p>A miniature proof assistant. Click term constructors to build a
+       proof of a proposition, and watch the goal shrink. Solve one and it
+       hands you Lean code you can paste straight into the chapter.</p>
+  </a>
+
+  <a class="card" href="tactic-state.html">
+    <div class="glyph">⊢</div>
+    <span class="chip">Ch. 7</span>
+    <h3>Reading the Goal State</h3>
+    <p>Four real proofs, stepped through tactic by tactic, with the goal
+       state captured from Lean itself. New hypotheses in green, changed
+       goals in amber.</p>
+  </a>
+</div>
+
+<h2>How to use these</h2>
+<div class="panel">
+<p style="margin-top:0">
+  Open them straight from disk — no server needed:
+</p>
+<pre class="mono" style="background:var(--panel-2);padding:.7rem .9rem;border-radius:8px;overflow-x:auto">open applets/index.html</pre>
+<p style="margin-bottom:0">
+  They are single self-contained HTML files with no dependencies, so they
+  work offline and will keep working. If you want to poke at how they're
+  built, the JavaScript is right there in the file — the reduction machine
+  in particular is a real (tiny) term rewriter, about 60 lines.
+</p>
+</div>
+</div>
+</body>
+</html>

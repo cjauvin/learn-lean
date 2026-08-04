@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reading the Goal State — learn-lean</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: start; }
+  @media (max-width: 820px) { .split { grid-template-columns: 1fr; } }
+
+  .script { font-family: var(--mono); font-size: .86rem; line-height: 1.75; }
+  .line {
+    padding: .05rem .5rem; border-radius: 5px; cursor: pointer;
+    white-space: pre; border-left: 2px solid transparent;
+  }
+  .line:hover { background: var(--panel-2); }
+  .line.cur { background: var(--accent-soft); border-left-color: var(--accent); }
+  .line.past { color: var(--ink-dim); }
+  .line.future { opacity: .45; }
+
+  .state { font-family: var(--mono); font-size: .86rem; }
+  .goalcard { border: 1px solid var(--line); border-radius: 8px; padding: .6rem .8rem; margin-bottom: .6rem; }
+  .goalcard.faded { opacity: .5; }
+  .casename { font-size: .72rem; color: var(--accent); text-transform: uppercase; letter-spacing: .06em; margin-bottom: .3rem; }
+  .hyp { padding: .1rem .35rem; border-radius: 4px; border-left: 2px solid transparent; }
+  .hyp.new { background: var(--good-soft); border-left-color: var(--good); }
+  .hyp .nm { color: var(--accent); }
+  .turn { border-top: 1px solid var(--line); margin-top: .45rem; padding-top: .45rem; }
+  .turn.changed { background: var(--warn-soft); border-radius: 4px; padding: .45rem .35rem .25rem; }
+  .nogoals { color: var(--good); font-family: var(--sans); }
+
+  .why { font-size: .85rem; color: var(--ink-dim); margin-top: .9rem;
+         border-left: 2px solid var(--accent); padding-left: .8rem; min-height: 3em; }
+  .counter { font-size: .8rem; color: var(--ink-dim); margin-left: auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="back" href="index.html">← all applets</a>
+<header>
+  <h1>Reading the Goal State</h1>
+  <p class="sub">
+    A tactic proof looks like nonsense until you can see what it's doing to
+    the goal. In VS Code the InfoView shows this live; here it's frozen so
+    you can step back and forth. New hypotheses are green; a changed goal
+    is amber.
+  </p>
+  <p class="sub" style="margin-top:.6rem">
+    Every state below was captured from Lean 4 itself with
+    <code>trace_state</code> — this is exactly what your editor will show you.
+  </p>
+</header>
+
+<div class="controls">
+  <select id="pick"></select>
+  <button id="prev">← Back</button>
+  <button id="next" class="primary">Step →</button>
+  <span class="counter" id="counter"></span>
+</div>
+
+<div class="split">
+  <div class="panel">
+    <h2 style="margin-top:0">Proof script</h2>
+    <div class="script" id="script"></div>
+    <div class="why" id="why"></div>
+  </div>
+  <div class="panel">
+    <h2 style="margin-top:0">Goal state</h2>
+    <div class="state" id="state"></div>
+  </div>
+</div>
+
+<p class="note">
+  Notice the pattern: <b>every</b> tactic either moves something from below
+  the <code>⊢</code> to above it (<code>intro</code>, <code>cases</code>,
+  <code>induction</code>), or rewrites what's below it (<code>simp</code>,
+  <code>rw</code>, <code>omega</code>), or closes a goal outright
+  (<code>exact</code>, <code>rfl</code>). That's the whole vocabulary.
+  When you're stuck, ask which of those three you're trying to do.
+</p>
+</div>
+
+<script>
+/* Goal states below were produced by running the proofs through Lean with
+   `trace_state` between tactics — not written by hand. */
+
+const H = (nm, ty) => ({ nm, ty });
+const G = (hyps, goal, cse) => ({ hyps, goal, cse });
+
+const PROOFS = {
+  'P ∧ Q → Q ∧ P': [
+    { line: 'example : P ∧ Q → Q ∧ P := by', why:
+      'The starting state. Everything before the `:=` becomes the goal.',
+      goals: [G([H('P Q R','Prop')], 'P ∧ Q → Q ∧ P')] },
+    { line: '  intro h', why:
+      '`intro` takes the antecedent of the arrow and makes it a hypothesis. In term mode this was `fun h => …` — same move, other notation.',
+      goals: [G([H('P Q R','Prop'), H('h','P ∧ Q')], 'Q ∧ P')] },
+    { line: '  have hp := h.left', why:
+      '`have` names an intermediate result. `h.left` is field access on the And-structure — pure Chapter 4 syntax.',
+      goals: [G([H('P Q R','Prop'), H('h','P ∧ Q'), H('hp','P')], 'Q ∧ P')] },
+    { line: '  have hq := h.right', why:
+      'Same again for the other field. Now everything the goal needs is sitting in the context.',
+      goals: [G([H('P Q R','Prop'), H('h','P ∧ Q'), H('hp','P'), H('hq','Q')], 'Q ∧ P')] },
+    { line: '  exact ⟨hq, hp⟩', why:
+      '`exact` supplies a term of exactly the goal type — here the anonymous constructor for a pair, with the components swapped. No goals left.',
+      goals: [] },
+  ],
+
+  '0 + n = n  (induction)': [
+    { line: 'theorem zero_add\' (n : Nat) : 0 + n = n := by', why:
+      'Note this is NOT true by `rfl`. Lean\'s `+` recurses on its second argument, so `0 + n` is stuck until we know the shape of `n`.',
+      goals: [G([H('n','Nat')], '0 + n = n')] },
+    { line: '  induction n with', why:
+      'One goal per constructor of `Nat`. The `succ` case comes with an induction hypothesis `ih` for free — that\'s the whole power of the tactic.',
+      goals: [G([], '0 + 0 = 0', 'zero'),
+              G([H('k','Nat'), H('ih','0 + k = k')], '0 + (k + 1) = k + 1', 'succ')] },
+    { line: '  | zero => rfl', why:
+      '`0 + 0` computes to `0`, so both sides are literally the same term. `rfl` closes it. First goal gone.',
+      goals: [G([H('k','Nat'), H('ih','0 + k = k')], '0 + (k + 1) = k + 1', 'succ')] },
+    { line: '  | succ k ih => simp', why:
+      '`simp` rewrites with the library\'s simp set until the two sides match. Try replacing it with `simp [ih]` and watch Lean tell you `ih` was not even needed.',
+      goals: [] },
+  ],
+
+  'P ∧ (Q ∨ R) → (P∧Q) ∨ (P∧R)': [
+    { line: 'example : P ∧ (Q ∨ R) → (P ∧ Q) ∨ (P ∧ R) := by', why:
+      'Distributivity. The shape of the goal tells you the plan: intro, then case-split on the disjunction.',
+      goals: [G([H('P Q R','Prop')], 'P ∧ (Q ∨ R) → P ∧ Q ∨ P ∧ R')] },
+    { line: '  intro ⟨hp, hqr⟩', why:
+      '`intro` accepts a pattern, so you can destructure the conjunction on the way in. One tactic doing the work of two.',
+      goals: [G([H('P Q R','Prop'), H('hp','P'), H('hqr','Q ∨ R')], 'P ∧ Q ∨ P ∧ R')] },
+    { line: '  cases hqr with', why:
+      'Case analysis on an `∨` — two goals, one per constructor. The disjunct becomes a hypothesis in each branch.',
+      goals: [G([H('P Q R','Prop'), H('hp','P'), H('hq','Q')], 'P ∧ Q ∨ P ∧ R', 'inl'),
+              G([H('P Q R','Prop'), H('hp','P'), H('hr','R')], 'P ∧ Q ∨ P ∧ R', 'inr')] },
+    { line: '  | inl hq => left', why:
+      'In this branch we have `Q`, so we commit to the left disjunct. `left` narrows the goal — this is `Or.inl` from Chapter 6.',
+      goals: [G([H('P Q R','Prop'), H('hp','P'), H('hq','Q')], 'P ∧ Q', 'inl'),
+              G([H('P Q R','Prop'), H('hp','P'), H('hr','R')], 'P ∧ Q ∨ P ∧ R', 'inr')] },
+    { line: '             exact ⟨hp, hq⟩', why:
+      'Pair them up. Left branch closed; the `inr` goal is all that remains.',
+      goals: [G([H('P Q R','Prop'), H('hp','P'), H('hr','R')], 'P ∧ Q ∨ P ∧ R', 'inr')] },
+    { line: '  | inr hr => right; exact ⟨hp, hr⟩', why:
+      'The mirror image. `;` just sequences two tactics on one line.',
+      goals: [] },
+  ],
+
+  'length of xs ++ ys': [
+    { line: 'theorem length_append (xs ys : List α) :', why:
+      'A real fact about a real function — the kind of thing Chapter 8 is made of.',
+      goals: [G([H('α','Type u_1'), H('xs ys','List α')], '(xs ++ ys).length = xs.length + ys.length')] },
+    { line: '  induction xs with', why:
+      'Induct on `xs`, because `++` recurses on its first argument. Picking the right thing to induct on is most of the skill.',
+      goals: [G([H('α','Type u_1'), H('ys','List α')], '([] ++ ys).length = [].length + ys.length', 'nil'),
+              G([H('α','Type u_1'), H('ys','List α'), H('h','α'), H('t','List α'),
+                 H('ih','(t ++ ys).length = t.length + ys.length')],
+                '(h :: t ++ ys).length = (h :: t).length + ys.length', 'cons')] },
+    { line: '  | nil => simp', why:
+      '`[] ++ ys` is `ys` and `[].length` is `0`, both by definition. `simp` knows all of it.',
+      goals: [G([H('α','Type u_1'), H('ys','List α'), H('h','α'), H('t','List α'),
+                 H('ih','(t ++ ys).length = t.length + ys.length')],
+                '(h :: t ++ ys).length = (h :: t).length + ys.length', 'cons')] },
+    { line: '  | cons h t ih => simp [ih]', why:
+      'Feeding `ih` to `simp` rewrites the recursive occurrence away. What is left is pure arithmetic — note the goal has no lists in it any more.',
+      goals: [G([H('α','Type u_1'), H('ys','List α'), H('h','α'), H('t','List α'),
+                 H('ih','(t ++ ys).length = t.length + ys.length')],
+                't.length + ys.length + 1 = t.length + 1 + ys.length', 'cons')] },
+    { line: '                    omega', why:
+      'Associativity and commutativity of `+`. You could grind through it by hand with `Nat.add_comm`; `omega` just decides it. This division of labour — you find the structure, the tactic does the algebra — is what proving in Lean feels like.',
+      goals: [] },
+  ],
+};
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+let cur = null, idx = 0;
+
+function load(name) { cur = name; idx = 0; draw(); }
+
+function draw() {
+  const steps = PROOFS[cur];
+  $('pick').value = cur;
+  $('script').innerHTML = steps.map((s, i) =>
+    `<div class="line ${i === idx ? 'cur' : i < idx ? 'past' : 'future'}" data-i="${i}">${esc(s.line)}</div>`
+  ).join('');
+  [...$('script').children].forEach(el => el.onclick = () => { idx = +el.dataset.i; draw(); });
+
+  $('why').textContent = steps[idx].why;
+  $('counter').textContent = `step ${idx} of ${steps.length - 1}`;
+  $('prev').disabled = idx === 0;
+  $('next').disabled = idx === steps.length - 1;
+
+  const goals = steps[idx].goals;
+  const prev = idx > 0 ? steps[idx - 1].goals : [];
+
+  if (!goals.length) {
+    $('state').innerHTML = `<div class="nogoals">No goals.<br><span style="color:var(--ink-dim)">
+      Lean has assembled a complete proof term. The theorem is proved.</span></div>`;
+    return;
+  }
+
+  $('state').innerHTML = goals.map((g, gi) => {
+    /* a hypothesis is "new" if no goal in the previous state had it */
+    const wasThere = h => prev.some(pg => pg.hyps.some(p => p.nm === h.nm && p.ty === h.ty));
+    const goalChanged = !prev.some(pg => pg.goal === g.goal);
+    return `<div class="goalcard${gi > 0 ? ' faded' : ''}">
+      ${g.cse ? `<div class="casename">case ${esc(g.cse)}</div>` : ''}
+      ${g.hyps.map(h => `<div class="hyp${wasThere(h) ? '' : ' new'}"><span class="nm">${esc(h.nm)}</span> : ${esc(h.ty)}</div>`).join('')}
+      <div class="turn${goalChanged ? ' changed' : ''}">⊢ ${esc(g.goal)}</div>
+    </div>`;
+  }).join('') + (goals.length > 1
+    ? `<div style="font-size:.78rem;color:var(--ink-dim);font-family:var(--sans)">
+         ${goals.length} goals — Lean works on the first one; the rest wait their turn.</div>` : '');
+}
+
+$('pick').innerHTML = Object.keys(PROOFS).map(k => `<option>${esc(k)}</option>`).join('');
+$('pick').onchange = e => load(e.target.value);
+$('next').onclick = () => { idx++; draw(); };
+$('prev').onclick = () => { idx--; draw(); };
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight' && idx < PROOFS[cur].length - 1) { idx++; draw(); }
+  if (e.key === 'ArrowLeft' && idx > 0) { idx--; draw(); }
+});
+load(Object.keys(PROOFS)[0]);
+</script>
+</body>
+</html>
