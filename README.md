@@ -47,6 +47,9 @@ Check your progress at any time:
 ./progress.sh
 ```
 
+Example output — *not* real numbers, just the shape of it (green = chapter
+complete, amber = in progress):
+
 ```
 Ch01_Values                   6/6   ██████
 Ch02_Inductive                5/8   █████░░░
